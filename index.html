@@ -27,6 +27,13 @@
       - Artwork stays generic (parcel and ledger)
  4. Readme       : see README.md alongside this file
 --------------------------------------------------------------------------------
+ REVISIONS
+   10 Nov 2026 (Claude Fable 5.2) - prompt: "Put shipping price in setup and
+     make order editable."
+     - Shipping charges now live in Setup and apply to every new order.
+     - Saved orders can be edited in place (same order, no second entry);
+       while editing, that order's own shipping amount can be changed.
+--------------------------------------------------------------------------------
  Single file, no frameworks, no CDN, no build step. Data lives in localStorage
  under the key "dutchland.v1". Money is held in paise (integers) throughout.
 ================================================================================
@@ -110,7 +117,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible,button:focus-vis
 
 .sendbar{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 -6px 18px rgb(0 0 0 / .08)}
 .totals{margin:0;display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:.9rem}
-.totals dt{color:var(--muted)} .totals dd{margin:0;text-align:right}
+.totals dt{color:var(--muted)} .totals dt a{color:var(--brand);font-size:.8rem} .totals dd{margin:0;text-align:right}
 .totals .grand{font-family:var(--display);font-size:1.25rem;font-weight:700;color:var(--ink);padding-top:4px}
 
 .sent{align-items:flex-start}
@@ -214,23 +221,31 @@ var IC={
   chat:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1.6-4.4A8 8 0 1 1 9 18.6z"/><path d="M9 11h6M9 14h3"/></svg>',
   copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
   down:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
+  pen:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></svg>',
   tick:'<svg class="tick" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="24" r="20"/><path d="M15 25l6 6 12-13"/></svg>'
 };
 
 /* ---------- state (single source of truth: S, mirrored to localStorage) ---------- */
 function freshState(){
   return {v:1,
-    setup:{supplier:'',wa:'',buyer:'',address:''},
-    draft:{date:today(),example:true,shipping:'80',note:'',items:[
+    setup:{supplier:'',wa:'',shipping:'',buyer:'',address:''},
+    draft:{date:today(),example:true,note:'',items:[
       {name:'Basmati rice',qty:'5',unit:'kg',price:'120'},
       {name:'Sunflower oil',qty:'2',unit:'L',price:'165'},
       {name:'Tea',qty:'1',unit:'pkt',price:'240'}]},
     sentId:null,
+    edit:null,          /* {id, fromSent, d} while a saved order is being edited */
     orders:[]};
 }
 var storeOK=true, S;
 try{S=JSON.parse(localStorage.getItem(KEY));}catch(e){storeOK=false;}
 if(!S||S.v!==1||!S.draft||!Array.isArray(S.orders)) S=freshState();
+/* migrate first version: shipping moved from the order form into Setup */
+if(S.setup.shipping===undefined){S.setup.shipping=(!S.draft.example&&S.draft.shipping)||'';}
+delete S.draft.shipping;
+if(S.edit===undefined) S.edit=null;
+if(S.edit&&!S.orders.some(function(o){return o.id===S.edit.id;})) S.edit=null;
+function cur(){return S.edit?S.edit.d:S.draft;}   /* the form being worked on: an edit, or the next order */
 function persist(){
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){storeOK=false;}
   $('#nostore').hidden=storeOK;
@@ -246,7 +261,7 @@ function calc(d){
     lines.push({name:name,qty:q,unit:String(it.unit||'').trim(),rate:rate,amount:amount});
     sub+=amount;
   });
-  var ship=toPaise(d.shipping);
+  var ship=toPaise(S.edit&&d===S.edit.d?d.shipping:S.setup.shipping);  /* new orders take shipping from Setup */
   return {lines:lines,subtotal:sub,shipping:ship,total:sub+ship};
 }
 function lineAmount(it){return Math.round(num(it.qty)*toPaise(it.price));}
@@ -260,10 +275,12 @@ function nextNo(date){
   S.orders.forEach(function(o){if(o.no.indexOf(pre)===0) max=Math.max(max,parseInt(o.no.slice(pre.length),10)||0);});
   return pre+(max+1);
 }
+function findOrder(id){return S.orders.filter(function(o){return o.id===id;})[0];}
 function buildOrder(){
-  var c=calc(S.draft),date=S.draft.date||today();
-  return {id:Date.now().toString(36),no:nextNo(date),date:date,items:c.lines,shipping:c.shipping,
-    subtotal:c.subtotal,total:c.total,note:String(S.draft.note||'').trim(),supplier:String(S.setup.supplier||'').trim()};
+  var d=cur(),c=calc(d),date=d.date||today(),old=S.edit&&findOrder(S.edit.id);
+  var keepNo=old&&old.no.slice(0,6)===date.slice(0,4)+date.slice(5,7);   /* same month keeps its number */
+  return {id:old?old.id:Date.now().toString(36),no:keepNo?old.no:nextNo(date),date:date,items:c.lines,shipping:c.shipping,
+    subtotal:c.subtotal,total:c.total,note:String(d.note||'').trim(),supplier:old?old.supplier:String(S.setup.supplier||'').trim()};
 }
 function message(o){
   var s=S.setup,L=[];
@@ -279,8 +296,10 @@ function message(o){
   return L.join('\n');
 }
 function waLink(o){var n=waNumber(S.setup.wa);return n?'https://wa.me/'+n+'?text='+encodeURIComponent(message(o)):'';}
-function draftFrom(o){
-  return {date:today(),example:false,shipping:o.shipping?String(o.shipping/100):'',note:'',
+function draftFrom(o,forEdit){
+  if(forEdit) return {date:o.date,example:false,shipping:o.shipping?String(o.shipping/100):'',note:o.note||'',
+    items:o.items.map(function(it){return {name:it.name,qty:String(it.qty),unit:it.unit,price:String(it.rate/100)};})};
+  return {date:today(),example:false,note:'',
     items:o.items.map(function(it){return {name:it.name,qty:String(it.qty),unit:it.unit,price:String(it.rate/100)};})};
 }
 function csvFor(year){
@@ -330,7 +349,7 @@ function rowHTML(it,i){
     '</div></li>';
 }
 function renderOrder(){
-  var sent=S.sentId&&S.orders.filter(function(o){return o.id===S.sentId;})[0];
+  var sent=!S.edit&&S.sentId&&findOrder(S.sentId);
   if(sent){
     var link=waLink(sent);
     vOrder.innerHTML='<div class="card sent">'+IC.tick+
@@ -339,35 +358,38 @@ function renderOrder(){
       '<pre class="msg" tabindex="0">'+esc(message(sent))+'</pre>'+
       '<div class="actions stretch">'+
         (link?'<a class="btn" href="'+esc(link)+'" target="_blank" rel="noopener">'+IC.chat+'Open WhatsApp again</a>':'')+
-        '<button type="button" class="btn" data-act="copymsg">'+IC.copy+'Copy message</button></div>'+
+        '<button type="button" class="btn" data-act="copymsg">'+IC.copy+'Copy message</button>'+
+        '<button type="button" class="btn" data-act="editsent">'+IC.pen+'Edit this order</button></div>'+
       '<button type="button" class="btn primary" data-act="next" style="width:100%">Start next order</button>'+
       '<p class="muted">The next order opens prefilled with these items and prices.</p></div>';
     return;
   }
-  var d=S.draft;
+  var d=cur(),ed=S.edit&&findOrder(S.edit.id);
   vOrder.innerHTML='<div class="card">'+
-    '<div class="cardhead"><h2>'+(S.orders.length?'Next order':'Your order')+'</h2>'+
+    '<div class="cardhead"><h2>'+(ed?'Editing order '+esc(ed.no):S.orders.length?'Next order':'Your order')+'</h2>'+
       '<label style="flex:0 1 170px">Order date<input type="date" id="odate" value="'+esc(d.date)+'"></label></div>'+
-    (d.example?'<p class="banner" id="exnote">These three rows are examples. Type over them or clear them.</p>':
+    (ed?'<p class="banner">You are changing a saved order. Saving updates it in the year account. It is not added a second time.</p>':
+     d.example?'<p class="banner" id="exnote">These three rows are examples. Type over them or clear them.</p>':
       (S.orders.length?'<p class="muted">Prefilled from your last order. Change what differs this month.</p>':''))+
     '<ul id="rows">'+d.items.map(rowHTML).join('')+'</ul>'+
     '<div class="actions"><button type="button" class="btn small" data-act="add">'+IC.plus+'Add item</button>'+
       '<button type="button" class="btn small" data-act="clear">Clear all</button></div>'+
-    '<label>Shipping charges ₹<input id="ship" class="num" inputmode="decimal" value="'+esc(d.shipping)+'" placeholder="0" autocomplete="off"></label>'+
+    (ed?'<label>Shipping charges for this order ₹<input id="ship" class="num" inputmode="decimal" value="'+esc(d.shipping)+'" placeholder="0" autocomplete="off"></label>':'')+
     '<label>Note for the supplier (optional)<textarea id="note" rows="2">'+esc(d.note)+'</textarea></label>'+
     '</div>'+
     '<div class="sendbar">'+
-      '<dl class="totals num"><dt>Items (<span id="t-count"></span>)</dt><dd id="t-sub"></dd><dt>Shipping</dt><dd id="t-ship"></dd>'+
+      '<dl class="totals num"><dt>Items (<span id="t-count"></span>)</dt><dd id="t-sub"></dd><dt>Shipping'+(ed?'':' <a href="#setup">set in Setup</a>')+'</dt><dd id="t-ship"></dd>'+
         '<dt class="grand">Total</dt><dd class="grand" id="t-total"></dd></dl>'+
       '<p class="warn" id="why" hidden></p>'+
-      '<div class="actions stretch"><a class="btn primary" id="send" target="_blank" rel="noopener">'+IC.chat+'Save and send on WhatsApp</a>'+
-        '<button type="button" class="btn" data-act="saveonly">Save without sending</button></div>'+
+      '<div class="actions stretch"><a class="btn primary" id="send" target="_blank" rel="noopener">'+IC.chat+(ed?'Save changes and send on WhatsApp':'Save and send on WhatsApp')+'</a>'+
+        '<button type="button" class="btn" data-act="saveonly">'+(ed?'Save changes':'Save without sending')+'</button>'+
+        (ed?'<button type="button" class="btn" data-act="canceledit">Cancel</button>':'')+'</div>'+
     '</div>';
   updateTotals();
 }
 function updateTotals(){
   if(!$('#t-total')) return;
-  var c=calc(S.draft),why=[];
+  var c=calc(cur()),why=[];
   $('#t-count').textContent=c.lines.length;
   $('#t-sub').textContent=inr(c.subtotal);$('#t-ship').textContent=inr(c.shipping);$('#t-total').textContent=inr(c.total);
   if(!c.lines.length) why.push('Add at least one item with a name and a quantity.');
@@ -382,20 +404,33 @@ function updateTotals(){
 function saveOrder(){
   var o=buildOrder();
   if(!o.items.length) return null;
-  S.orders.push(o);S.sentId=o.id;S.draft=draftFrom(o);
+  if(S.edit){
+    var i=S.orders.indexOf(findOrder(o.id));if(i<0) return null;
+    S.orders[i]=o;                                   /* replace in place: one order, one entry */
+    if(S.edit.fromSent) S.draft=draftFrom(o);        /* next order still prefills from this one */
+    S.edit=null;
+  }else{
+    S.orders.push(o);S.draft=draftFrom(o);
+  }
+  S.sentId=o.id;
   persist();
   return o;
+}
+function startEdit(o){
+  S.edit={id:o.id,fromSent:S.sentId===o.id,d:draftFrom(o,true)};persist();
+  if(location.hash==='#order') renderOrder(); else location.hash='order';
+  window.scrollTo(0,0);
 }
 vOrder.addEventListener('input',function(e){
   var t=e.target,li=t.closest('.row');
   if(li&&t.dataset.f){
-    var it=S.draft.items[+li.dataset.i];
+    var d=cur(),it=d.items[+li.dataset.i];
     it[t.dataset.f]=t.value;
     $('.line',li).textContent=inr(lineAmount(it));
-    if(S.draft.example){S.draft.example=false;var n=$('#exnote');if(n) n.remove();}
-  }else if(t.id==='ship') S.draft.shipping=t.value;
-  else if(t.id==='note') S.draft.note=t.value;
-  else if(t.id==='odate') S.draft.date=t.value||today();
+    if(d.example){d.example=false;var n=$('#exnote');if(n) n.remove();}
+  }else if(t.id==='ship') cur().shipping=t.value;
+  else if(t.id==='note') cur().note=t.value;
+  else if(t.id==='odate') cur().date=t.value||today();
   persist();updateTotals();
 });
 vOrder.addEventListener('click',function(e){
@@ -410,13 +445,13 @@ vOrder.addEventListener('click',function(e){
   var b=e.target.closest('[data-act]');if(!b) return;
   var act=b.dataset.act;
   if(act==='add'){
-    S.draft.items.push({name:'',qty:'1',unit:'',price:''});persist();renderOrder();
-    var f=$('#it-name-'+(S.draft.items.length-1));if(f) f.focus();
+    cur().items.push({name:'',qty:'1',unit:'',price:''});persist();renderOrder();
+    var f=$('#it-name-'+(cur().items.length-1));if(f) f.focus();
   }else if(act==='del'){
-    S.draft.items.splice(+b.closest('.row').dataset.i,1);S.draft.example=false;persist();renderOrder();
+    cur().items.splice(+b.closest('.row').dataset.i,1);cur().example=false;persist();renderOrder();
   }else if(act==='clear'){
-    ask('Clear all items?','The order form empties. Saved orders in the year account stay.','Clear').then(function(y){
-      if(!y) return;S.draft.items=[{name:'',qty:'1',unit:'',price:''}];S.draft.shipping='';S.draft.note='';S.draft.example=false;persist();renderOrder();});
+    ask('Clear all items?','The item rows empty. Nothing changes in the year account until you save.','Clear').then(function(y){
+      if(!y) return;var d=cur();d.items=[{name:'',qty:'1',unit:'',price:''}];d.note='';d.example=false;persist();renderOrder();});
   }else if(act==='saveonly'){
     var o=saveOrder();
     if(!o){toast('Add at least one item first');return;}
@@ -424,7 +459,11 @@ vOrder.addEventListener('click',function(e){
   }else if(act==='next'){
     S.sentId=null;S.draft.date=today();persist();renderOrder();window.scrollTo(0,0);
   }else if(act==='copymsg'){
-    var s=S.orders.filter(function(o){return o.id===S.sentId;})[0];if(s) copyText(message(s),'Message');
+    var s=findOrder(S.sentId);if(s) copyText(message(s),'Message');
+  }else if(act==='editsent'){
+    var se=findOrder(S.sentId);if(se) startEdit(se);
+  }else if(act==='canceledit'){
+    S.edit=null;persist();renderOrder();toast('Changes discarded');
   }
 });
 
@@ -475,7 +514,8 @@ function renderAccount(){
           return '<li><span>'+esc(it.name)+' <small>'+it.qty+(it.unit?' '+esc(it.unit):'')+' x '+inr(it.rate)+'</small></span><span>'+inr(it.amount)+'</span></li>';}).join('')+
           '<li><span>Shipping</span><span>'+inr(o.shipping)+'</span></li></ul>'+
         (o.note?'<p class="muted">Note: '+esc(o.note)+'</p>':'')+
-        '<div class="actions"><button type="button" class="btn small" data-act="reuse" data-id="'+o.id+'">Order this again</button>'+
+        '<div class="actions"><button type="button" class="btn small" data-act="edito" data-id="'+o.id+'">'+IC.pen+'Edit</button>'+
+          '<button type="button" class="btn small" data-act="reuse" data-id="'+o.id+'">Order this again</button>'+
           '<button type="button" class="btn small" data-act="copyo" data-id="'+o.id+'">Copy message</button>'+
           '<button type="button" class="btn small danger" data-act="delo" data-id="'+o.id+'">Delete</button></div></div></details>';
     });
@@ -496,10 +536,11 @@ vAcc.addEventListener('click',function(e){
     }catch(err){copyText(csvFor(year),'CSV');}
   }else if(act==='csvcopy') copyText(csvFor(year),'CSV');
   else if(act==='copyo'&&o) copyText(message(o),'Message');
-  else if(act==='reuse'&&o){S.draft=draftFrom(o);S.sentId=null;persist();location.hash='order';toast('Loaded into the order form');}
+  else if(act==='edito'&&o) startEdit(o);
+  else if(act==='reuse'&&o){S.draft=draftFrom(o);S.sentId=null;S.edit=null;persist();location.hash='order';toast('Loaded into the order form');}
   else if(act==='delo'&&o){
     ask('Delete order '+o.no+'?',inr(o.total)+' on '+niceDate(o.date)+' leaves the '+o.date.slice(0,4)+' account. This cannot be undone.','Delete').then(function(y){
-      if(!y) return;S.orders=S.orders.filter(function(x){return x.id!==o.id;});if(S.sentId===o.id) S.sentId=null;persist();renderAccount();toast('Order deleted');});
+      if(!y) return;S.orders=S.orders.filter(function(x){return x.id!==o.id;});if(S.sentId===o.id) S.sentId=null;if(S.edit&&S.edit.id===o.id) S.edit=null;persist();renderAccount();toast('Order deleted');});
   }
 });
 
@@ -510,7 +551,9 @@ function renderSetup(){
   vSetup.innerHTML='<div class="card"><h2>Supplier</h2>'+
     '<label>Supplier name<input id="su-supplier" data-k="supplier" value="'+esc(s.supplier)+'" placeholder="Who receives the order" autocomplete="off"></label>'+
     '<label>Supplier’s WhatsApp number<input id="su-wa" data-k="wa" type="tel" inputmode="tel" value="'+esc(s.wa)+'" placeholder="98765 43210" autocomplete="off"></label>'+
-    '<p class="muted" id="wa-hint"></p></div>'+
+    '<p class="muted" id="wa-hint"></p>'+
+    '<label>Shipping charges per order ₹<input id="su-shipping" data-k="shipping" class="num" inputmode="decimal" value="'+esc(s.shipping)+'" placeholder="0" autocomplete="off"></label>'+
+    '<p class="muted">Added to every new order. Saved orders keep the shipping they were saved with.</p></div>'+
     '<div class="card"><h2>You</h2>'+
     '<label>Your name (shown in the message)<input id="su-buyer" data-k="buyer" value="'+esc(s.buyer)+'" autocomplete="off"></label>'+
     '<label>Delivery address (optional)<textarea id="su-address" data-k="address" rows="2">'+esc(s.address)+'</textarea></label></div>'+

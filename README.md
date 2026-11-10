@@ -10,9 +10,9 @@ A single-file, offline-first ordering page for a repeating monthly order. You en
 
 | Tab | Purpose |
 | --- | --- |
-| **Order** | Itemized order form (item, qty, unit, price per unit), shipping charges, note. Live totals. "Save and send on WhatsApp" stores the order and opens a chat with the supplier with the message filled in. |
-| **Year account** | Calendar-year (Jan to Dec) totals, a month-by-month bar chart, every saved order with its lines, "Order this again", delete, and CSV export. |
-| **Setup** | Supplier name and WhatsApp number (saved once), your name and delivery address. |
+| **Order** | Itemized order form (item, qty, unit, price per unit), note. Shipping is taken from Setup. Live totals. "Save and send on WhatsApp" stores the order and opens a chat with the supplier with the message filled in. |
+| **Year account** | Calendar-year (Jan to Dec) totals, a month-by-month bar chart, every saved order with its lines, edit, "Order this again", delete, and CSV export. |
+| **Setup** | Supplier name, WhatsApp number and shipping charges per order (saved once), your name and delivery address. |
 
 ## Behaviour worth knowing
 
@@ -22,6 +22,12 @@ A single-file, offline-first ordering page for a repeating monthly order. You en
 - **WhatsApp number:** a 10 digit number is treated as Indian (+91). Include the country code for other countries. The page only opens WhatsApp with the text ready; you press send there.
 - **CSV export:** one row per item and one separate row for shipping, so the `Amount (INR)` column sums to the year total. The file carries a UTF-8 BOM and opens in Numbers and Excel. "Copy CSV" is the fallback where downloads are blocked.
 - **Storage:** everything lives in `localStorage` under the key `dutchland.v1`, per browser and per device. Clearing site data removes it, so export the CSV as a backup.
+
+## Revisions
+
+- **10 Nov 2026** (Claude Fable 5.2), prompt: "Put shipping price in setup and make order editable."
+  - Shipping charges moved to Setup and apply to every new order. Saved orders keep the shipping they were saved with.
+  - Saved orders can be edited from the saved card or the Year account. An edit replaces the same order in place, so the account never counts it twice. While editing, that order's own shipping can be changed.
 
 ## Run it
 
