@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+<head>
+<!--
+================================================================================
+ DUTCHLAND · Monthly order book
+--------------------------------------------------------------------------------
+ 1. Date created : 10 November 2026
+ 2. Tool         : Claude (Fable 5.2, Anthropic)
+ 3. Prompt used  :
+    "Let's create an itemized ordering application. which finally spits the
+    items entered by the user so assuming user knows the price of items and
+    quantity and shipment charges. Simple plain vanilla js application uses
+    local storage and remembers the last order. Takes the WhatsApp number and
+    sends the order to that whatsapp number orders are repetitive each month so
+    yearly account must be maintained in the local storage and even exportable
+    as CSV to the numbers app or Excel as a back up. save the application to
+    artifact too. And if possible create a repo at GitHub by the name dutchland
+    and publish the GitHub page after saving it as index.html and share the
+    link after publishing. any questions? Keep the styles minimal and remember
+    functionality proceeds, form decorate it with modern good looking design
+    and svg images."
+    Answers given to clarifying questions:
+      - Orders go to one fixed supplier (number saved once in Setup)
+      - Yearly account runs on the calendar year (Jan to Dec)
+      - A new order opens prefilled from the last order
+      - Artwork stays generic (parcel and ledger)
+ 4. Readme       : see README.md alongside this file
+--------------------------------------------------------------------------------
+ Single file, no frameworks, no CDN, no build step. Data lives in localStorage
+ under the key "dutchland.v1". Money is held in paise (integers) throughout.
+================================================================================
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dutchland Order Book</title>
+<style>
+/* Layout idea: one narrow column, three tabs (Order, Year account, Setup),
+   totals and the send button pinned under the order. */
+:root{
+  --bg:#f2f4fa; --surface:#ffffff; --ink:#16213d; --muted:#5b6684; --line:#d8ddea;
+  --brand:#1f3f9c; --brand-ink:#ffffff; --accent:#e4622a; --ok:#1b7f4b; --warn:#9a4a08; --danger:#b3261e;
+  --display:"Avenir Next","Segoe UI Semibold","Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+  --body:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",sans-serif;
+  --r:12px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1424; --surface:#182036; --ink:#e8ecf7; --muted:#9aa5c2; --line:#2c3655;
+    --brand:#8fa8ff; --brand-ink:#0f1424; --accent:#ff8b52; --ok:#5fd093; --warn:#f0b070; --danger:#ff8a80;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1424; --surface:#182036; --ink:#e8ecf7; --muted:#9aa5c2; --line:#2c3655;
+  --brand:#8fa8ff; --brand-ink:#0f1424; --accent:#ff8b52; --ok:#5fd093; --warn:#f0b070; --danger:#ff8a80;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--body)}
+.wrap{max-width:640px;margin:0 auto;padding:16px 16px 32px;display:flex;flex-direction:column;gap:14px}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:1.5rem;line-height:1.1} h2{font-size:1.1rem} h3{font-size:.95rem}
+p{margin:0}
+.muted{color:var(--muted);font-size:.875rem}
+.num{font-variant-numeric:tabular-nums}
+
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;flex-direction:column;gap:2px}
+.brand p{color:var(--muted);font-size:.875rem}
+.top svg{flex:none;width:112px;height:auto;max-width:34%}
+
+.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:4px}
+.tabs a{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 6px;border-radius:9px;color:var(--muted);text-decoration:none;font-weight:600;font-size:.9rem}
+.tabs a[aria-current="page"]{background:var(--brand);color:var(--brand-ink)}
+.tabs svg{width:16px;height:16px;flex:none}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:12px}
+.cardhead{display:flex;align-items:end;justify-content:space-between;gap:10px;flex-wrap:wrap}
+section[hidden]{display:none}
+section{display:flex;flex-direction:column;gap:14px}
+
+label{display:flex;flex-direction:column;gap:4px;font-size:.78rem;color:var(--muted);font-weight:600}
+input,textarea,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:9px 10px;width:100%;min-width:0}
+textarea{resize:vertical}
+input:focus-visible,textarea:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+#rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;flex-direction:column;gap:6px;padding-bottom:10px;border-bottom:1px dashed var(--line)}
+.row .r1{display:flex;gap:6px;align-items:center}
+.row .r1 .idx{flex:none;width:22px;color:var(--muted);font-size:.8rem;text-align:right}
+.row .r2{display:grid;grid-template-columns:1fr 1fr 1.25fr minmax(72px,auto);gap:6px;align-items:end;padding-left:28px}
+.row .line{align-self:center;text-align:right;font-weight:700;padding-top:16px;overflow-wrap:anywhere}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none;border-radius:10px;padding:11px 14px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.btn svg{width:18px;height:18px;flex:none}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.btn.primary[aria-disabled="true"]{opacity:.45;cursor:not-allowed}
+.btn.small{padding:8px 11px;font-size:.875rem;font-weight:600}
+.btn.danger{color:var(--danger)}
+.icon{flex:none;width:38px;height:38px;display:grid;place-items:center;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--muted);cursor:pointer}
+.icon svg{width:17px;height:17px}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.actions.stretch>*{flex:1 1 150px}
+
+.banner{display:flex;gap:8px;align-items:flex-start;font-size:.875rem;padding:9px 11px;border-radius:9px;border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--bg)}
+.warn{color:var(--warn);font-size:.875rem;font-weight:600}
+.warn a{color:inherit}
+
+.sendbar{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 -6px 18px rgb(0 0 0 / .08)}
+.totals{margin:0;display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:.9rem}
+.totals dt{color:var(--muted)} .totals dd{margin:0;text-align:right}
+.totals .grand{font-family:var(--display);font-size:1.25rem;font-weight:700;color:var(--ink);padding-top:4px}
+
+.sent{align-items:flex-start}
+.sent .tick{width:44px;height:44px;color:var(--ok)}
+.msg{margin:0;width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font:.875rem/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:11px;max-height:280px;overflow:auto}
+
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.stat{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.stat span{font-size:.75rem;color:var(--muted);font-weight:600}
+.stat b{font-family:var(--display);font-size:1.15rem;overflow-wrap:anywhere}
+.stat.total{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)} .stat.total span{color:inherit;opacity:.85}
+figure{margin:0} figure svg{width:100%;height:auto;display:block}
+.bar{fill:var(--brand)} .bar.peak{fill:var(--accent)} .axis{stroke:var(--line)} .tick-t{fill:var(--muted);font:10px var(--body)}
+
+.month{display:flex;justify-content:space-between;gap:10px;color:var(--muted);padding-top:4px}
+details{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 12px;align-items:center}
+summary::-webkit-details-marker{display:none}
+summary small{color:var(--muted);grid-column:1}
+summary b{grid-row:1 / span 2;grid-column:2;align-self:center}
+.obody{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:.9rem}
+.lines{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.lines li{display:grid;grid-template-columns:1fr auto;gap:10px}
+.lines li span:last-child{text-align:right}
+.lines small{color:var(--muted)}
+.empty{align-items:center;text-align:center;padding:24px 14px}
+.empty svg{width:120px;height:auto}
+
+dialog{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);color:var(--ink);padding:16px;width:min(92vw,440px)}
+dialog::backdrop{background:rgb(10 14 30 / .55)}
+dialog form{display:flex;flex-direction:column;gap:12px}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:999px;font-size:.875rem;font-weight:600;max-width:calc(100% - 32px);text-align:center;opacity:0;pointer-events:none;transition:opacity .2s;z-index:10}
+#toast.on{opacity:1}
+@media (prefers-reduced-motion: reduce){#toast{transition:none}}
+@media (min-width:520px){.stats{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <h1>Dutchland</h1>
+      <p>Monthly order book. Build the order, send it on WhatsApp, keep the year's account.</p>
+    </div>
+    <!-- Artwork: a parcel beside a ledger slip -->
+    <svg viewBox="0 0 140 96" role="img" aria-label="A parcel beside an order slip">
+      <rect x="62" y="10" width="62" height="78" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="2"/>
+      <rect x="72" y="22" width="30" height="5" rx="2.5" fill="var(--brand)"/>
+      <g fill="var(--line)"><rect x="72" y="36" width="42" height="4" rx="2"/><rect x="72" y="46" width="42" height="4" rx="2"/><rect x="72" y="56" width="42" height="4" rx="2"/></g>
+      <rect x="92" y="70" width="22" height="6" rx="3" fill="var(--accent)"/>
+      <path d="M12 46 46 34l34 12v32L46 90 12 78z" fill="var(--brand)"/>
+      <path d="M12 46 46 58l34-12M46 58v32" fill="none" stroke="var(--brand-ink)" stroke-width="2" stroke-linejoin="round" opacity=".7"/>
+      <path d="M29 40 63 52v10" fill="none" stroke="var(--accent)" stroke-width="5" stroke-linejoin="round"/>
+    </svg>
+  </header>
+
+  <nav class="tabs" aria-label="Sections">
+    <a href="#order" data-tab="order"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>Order</a>
+    <a href="#account" data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Year account</a>
+    <a href="#setup" data-tab="setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>Setup</a>
+  </nav>
+
+  <p id="nostore" class="banner" hidden>This browser is not saving data, so the order and account will be lost when the page closes. Open the page outside private mode to keep them.</p>
+
+  <main>
+    <section id="v-order"></section>
+    <section id="v-account" hidden></section>
+    <section id="v-setup" hidden></section>
+  </main>
+</div>
+
+<datalist id="units"><option value="kg"><option value="g"><option value="L"><option value="ml"><option value="pc"><option value="pkt"><option value="box"><option value="dozen"><option value="bag"></datalist>
+
+<dialog id="dlg"><form method="dialog">
+  <h2 id="dlg-title"></h2>
+  <p id="dlg-text" class="muted"></p>
+  <textarea id="dlg-area" rows="8" readonly hidden aria-label="Text to copy"></textarea>
+  <div class="actions stretch"><button class="btn" value="no" id="dlg-no">Cancel</button><button class="btn primary" value="yes" id="dlg-yes">OK</button></div>
+</form></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* ---------- helpers ---------- */
+var KEY='dutchland.v1';
+var $=function(s,r){return (r||document).querySelector(s);};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+var num=function(v){var n=parseFloat(String(v==null?'':v).replace(/,/g,'').trim());return isFinite(n)&&n>0?n:0;};
+var toPaise=function(v){return Math.round(num(v)*100);};
+var inr=function(p){return '₹'+(p/100).toLocaleString('en-IN',{minimumFractionDigits:p%100?2:0,maximumFractionDigits:2});};
+var pad=function(n){return String(n).padStart(2,'0');};
+var today=function(){var d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+var niceDate=function(iso){var a=iso.split('-').map(Number);return new Date(a[0],a[1]-1,a[2]).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});};
+var MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+var IC={
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  bin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
+  chat:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1.6-4.4A8 8 0 1 1 9 18.6z"/><path d="M9 11h6M9 14h3"/></svg>',
+  copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+  down:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
+  tick:'<svg class="tick" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="24" r="20"/><path d="M15 25l6 6 12-13"/></svg>'
+};
+
+/* ---------- state (single source of truth: S, mirrored to localStorage) ---------- */
+function freshState(){
+  return {v:1,
+    setup:{supplier:'',wa:'',buyer:'',address:''},
+    draft:{date:today(),example:true,shipping:'80',note:'',items:[
+      {name:'Basmati rice',qty:'5',unit:'kg',price:'120'},
+      {name:'Sunflower oil',qty:'2',unit:'L',price:'165'},
+      {name:'Tea',qty:'1',unit:'pkt',price:'240'}]},
+    sentId:null,
+    orders:[]};
+}
+var storeOK=true, S;
+try{S=JSON.parse(localStorage.getItem(KEY));}catch(e){storeOK=false;}
+if(!S||S.v!==1||!S.draft||!Array.isArray(S.orders)) S=freshState();
+function persist(){
+  try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){storeOK=false;}
+  $('#nostore').hidden=storeOK;
+}
+
+/* ---------- pure logic ---------- */
+function calc(d){
+  var lines=[],sub=0;
+  d.items.forEach(function(it){
+    var q=num(it.qty),name=String(it.name||'').trim();
+    if(!name||!q) return;
+    var rate=toPaise(it.price),amount=Math.round(q*rate);
+    lines.push({name:name,qty:q,unit:String(it.unit||'').trim(),rate:rate,amount:amount});
+    sub+=amount;
+  });
+  var ship=toPaise(d.shipping);
+  return {lines:lines,subtotal:sub,shipping:ship,total:sub+ship};
+}
+function lineAmount(it){return Math.round(num(it.qty)*toPaise(it.price));}
+function waNumber(raw){
+  var d=String(raw||'').replace(/\D/g,'').replace(/^0+/,'');
+  if(d.length===10) d='91'+d;
+  return d.length>=11&&d.length<=15?d:'';
+}
+function nextNo(date){
+  var pre=date.slice(0,4)+date.slice(5,7)+'-',max=0;
+  S.orders.forEach(function(o){if(o.no.indexOf(pre)===0) max=Math.max(max,parseInt(o.no.slice(pre.length),10)||0);});
+  return pre+(max+1);
+}
+function buildOrder(){
+  var c=calc(S.draft),date=S.draft.date||today();
+  return {id:Date.now().toString(36),no:nextNo(date),date:date,items:c.lines,shipping:c.shipping,
+    subtotal:c.subtotal,total:c.total,note:String(S.draft.note||'').trim(),supplier:String(S.setup.supplier||'').trim()};
+}
+function message(o){
+  var s=S.setup,L=[];
+  L.push('*Order'+(o.supplier?' for '+o.supplier:'')+'*');
+  if(String(s.buyer||'').trim()) L.push('From: '+s.buyer.trim());
+  L.push('Date: '+niceDate(o.date)+' | Order '+o.no,'');
+  o.items.forEach(function(it,i){
+    L.push((i+1)+'. '+it.name+' - '+it.qty+(it.unit?' '+it.unit:'')+' x '+inr(it.rate)+' = '+inr(it.amount));
+  });
+  L.push('','Items: '+inr(o.subtotal),'Shipping: '+inr(o.shipping),'*Total: '+inr(o.total)+'*');
+  if(String(s.address||'').trim()) L.push('','Deliver to: '+s.address.trim());
+  if(o.note) L.push('','Note: '+o.note);
+  return L.join('\n');
+}
+function waLink(o){var n=waNumber(S.setup.wa);return n?'https://wa.me/'+n+'?text='+encodeURIComponent(message(o)):'';}
+function draftFrom(o){
+  return {date:today(),example:false,shipping:o.shipping?String(o.shipping/100):'',note:'',
+    items:o.items.map(function(it){return {name:it.name,qty:String(it.qty),unit:it.unit,price:String(it.rate/100)};})};
+}
+function csvFor(year){
+  var text=function(v){var s=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(s)) s="'"+s;return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  var money=function(p){return (p/100).toFixed(2);};
+  var rows=[['Date','Order No','Supplier','Type','Description','Qty','Unit','Rate (INR)','Amount (INR)','Note']];
+  S.orders.filter(function(o){return o.date.slice(0,4)===String(year);})
+    .sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:a.no<b.no?-1:1;})
+    .forEach(function(o){
+      o.items.forEach(function(it){rows.push([o.date,o.no,text(o.supplier),'Item',text(it.name),it.qty,text(it.unit),money(it.rate),money(it.amount),text(o.note)]);});
+      if(o.shipping) rows.push([o.date,o.no,text(o.supplier),'Shipping','Shipping charges','','','',money(o.shipping),text(o.note)]);
+    });
+  return rows.map(function(r){return r.join(',');}).join('\r\n');
+}
+
+/* ---------- small UI utilities ---------- */
+var toastT;
+function toast(t){var el=$('#toast');el.textContent=t;el.classList.add('on');clearTimeout(toastT);toastT=setTimeout(function(){el.classList.remove('on');},2600);}
+function ask(title,text,yes,area){
+  var d=$('#dlg');
+  $('#dlg-title').textContent=title;$('#dlg-text').textContent=text;$('#dlg-yes').textContent=yes||'OK';
+  var a=$('#dlg-area');a.hidden=!area;a.value=area||'';$('#dlg-no').hidden=!!area;
+  return new Promise(function(res){
+    d.onclose=function(){res(d.returnValue==='yes');};
+    d.returnValue='no';
+    if(d.showModal) d.showModal(); else res(true);
+    if(area){a.focus();a.select();}
+  });
+}
+function copyText(t,label){
+  var fail=function(){ask('Copy this text','Select all of it and copy.', 'Done', t);};
+  try{navigator.clipboard.writeText(t).then(function(){toast(label+' copied');},fail);}catch(e){fail();}
+}
+
+/* ---------- Order view ---------- */
+var vOrder=$('#v-order');
+function rowHTML(it,i){
+  return '<li class="row" data-i="'+i+'">'+
+    '<div class="r1"><span class="idx num">'+(i+1)+'.</span>'+
+      '<input id="it-name-'+i+'" data-f="name" value="'+esc(it.name)+'" placeholder="Item name" aria-label="Item '+(i+1)+' name" autocomplete="off">'+
+      '<button type="button" class="icon" data-act="del" aria-label="Remove item '+(i+1)+'">'+IC.bin+'</button></div>'+
+    '<div class="r2">'+
+      '<label>Qty<input id="it-qty-'+i+'" data-f="qty" class="num" inputmode="decimal" value="'+esc(it.qty)+'" autocomplete="off"></label>'+
+      '<label>Unit<input id="it-unit-'+i+'" data-f="unit" list="units" value="'+esc(it.unit)+'" autocomplete="off"></label>'+
+      '<label>Price ₹ / unit<input id="it-price-'+i+'" data-f="price" class="num" inputmode="decimal" value="'+esc(it.price)+'" autocomplete="off"></label>'+
+      '<output class="line num">'+inr(lineAmount(it))+'</output>'+
+    '</div></li>';
+}
+function renderOrder(){
+  var sent=S.sentId&&S.orders.filter(function(o){return o.id===S.sentId;})[0];
+  if(sent){
+    var link=waLink(sent);
+    vOrder.innerHTML='<div class="card sent">'+IC.tick+
+      '<h2>Order '+esc(sent.no)+' saved</h2>'+
+      '<p class="muted"><span class="num">'+inr(sent.total)+'</span> on '+niceDate(sent.date)+', added to your '+sent.date.slice(0,4)+' account. WhatsApp opens with the message typed in. Press send there.</p>'+
+      '<pre class="msg" tabindex="0">'+esc(message(sent))+'</pre>'+
+      '<div class="actions stretch">'+
+        (link?'<a class="btn" href="'+esc(link)+'" target="_blank" rel="noopener">'+IC.chat+'Open WhatsApp again</a>':'')+
+        '<button type="button" class="btn" data-act="copymsg">'+IC.copy+'Copy message</button></div>'+
+      '<button type="button" class="btn primary" data-act="next" style="width:100%">Start next order</button>'+
+      '<p class="muted">The next order opens prefilled with these items and prices.</p></div>';
+    return;
+  }
+  var d=S.draft;
+  vOrder.innerHTML='<div class="card">'+
+    '<div class="cardhead"><h2>'+(S.orders.length?'Next order':'Your order')+'</h2>'+
+      '<label style="flex:0 1 170px">Order date<input type="date" id="odate" value="'+esc(d.date)+'"></label></div>'+
+    (d.example?'<p class="banner" id="exnote">These three rows are examples. Type over them or clear them.</p>':
+      (S.orders.length?'<p class="muted">Prefilled from your last order. Change what differs this month.</p>':''))+
+    '<ul id="rows">'+d.items.map(rowHTML).join('')+'</ul>'+
+    '<div class="actions"><button type="button" class="btn small" data-act="add">'+IC.plus+'Add item</button>'+
+      '<button type="button" class="btn small" data-act="clear">Clear all</button></div>'+
+    '<label>Shipping charges ₹<input id="ship" class="num" inputmode="decimal" value="'+esc(d.shipping)+'" placeholder="0" autocomplete="off"></label>'+
+    '<label>Note for the supplier (optional)<textarea id="note" rows="2">'+esc(d.note)+'</textarea></label>'+
+    '</div>'+
+    '<div class="sendbar">'+
+      '<dl class="totals num"><dt>Items (<span id="t-count"></span>)</dt><dd id="t-sub"></dd><dt>Shipping</dt><dd id="t-ship"></dd>'+
+        '<dt class="grand">Total</dt><dd class="grand" id="t-total"></dd></dl>'+
+      '<p class="warn" id="why" hidden></p>'+
+      '<div class="actions stretch"><a class="btn primary" id="send" target="_blank" rel="noopener">'+IC.chat+'Save and send on WhatsApp</a>'+
+        '<button type="button" class="btn" data-act="saveonly">Save without sending</button></div>'+
+    '</div>';
+  updateTotals();
+}
+function updateTotals(){
+  if(!$('#t-total')) return;
+  var c=calc(S.draft),why=[];
+  $('#t-count').textContent=c.lines.length;
+  $('#t-sub').textContent=inr(c.subtotal);$('#t-ship').textContent=inr(c.shipping);$('#t-total').textContent=inr(c.total);
+  if(!c.lines.length) why.push('Add at least one item with a name and a quantity.');
+  var hasNo=!!waNumber(S.setup.wa);
+  var send=$('#send'),w=$('#why');
+  if(!hasNo) why.push('Add the supplier’s WhatsApp number in <a href="#setup">Setup</a> to send.');
+  w.hidden=!why.length;w.innerHTML=why.join(' ');
+  var ready=c.lines.length&&hasNo;
+  send.setAttribute('aria-disabled',ready?'false':'true');
+  if(ready) send.href=waLink(buildOrder()); else send.removeAttribute('href');
+}
+function saveOrder(){
+  var o=buildOrder();
+  if(!o.items.length) return null;
+  S.orders.push(o);S.sentId=o.id;S.draft=draftFrom(o);
+  persist();
+  return o;
+}
+vOrder.addEventListener('input',function(e){
+  var t=e.target,li=t.closest('.row');
+  if(li&&t.dataset.f){
+    var it=S.draft.items[+li.dataset.i];
+    it[t.dataset.f]=t.value;
+    $('.line',li).textContent=inr(lineAmount(it));
+    if(S.draft.example){S.draft.example=false;var n=$('#exnote');if(n) n.remove();}
+  }else if(t.id==='ship') S.draft.shipping=t.value;
+  else if(t.id==='note') S.draft.note=t.value;
+  else if(t.id==='odate') S.draft.date=t.value||today();
+  persist();updateTotals();
+});
+vOrder.addEventListener('click',function(e){
+  var send=e.target.closest('#send');
+  if(send){
+    if(send.getAttribute('aria-disabled')==='true'){e.preventDefault();toast('Not ready to send yet');return;}
+    send.href=waLink(buildOrder());           /* link and saved order are built from the same draft */
+    if(!saveOrder()){e.preventDefault();return;}
+    setTimeout(renderOrder,80);               /* let the link open first, then show the saved card */
+    return;
+  }
+  var b=e.target.closest('[data-act]');if(!b) return;
+  var act=b.dataset.act;
+  if(act==='add'){
+    S.draft.items.push({name:'',qty:'1',unit:'',price:''});persist();renderOrder();
+    var f=$('#it-name-'+(S.draft.items.length-1));if(f) f.focus();
+  }else if(act==='del'){
+    S.draft.items.splice(+b.closest('.row').dataset.i,1);S.draft.example=false;persist();renderOrder();
+  }else if(act==='clear'){
+    ask('Clear all items?','The order form empties. Saved orders in the year account stay.','Clear').then(function(y){
+      if(!y) return;S.draft.items=[{name:'',qty:'1',unit:'',price:''}];S.draft.shipping='';S.draft.note='';S.draft.example=false;persist();renderOrder();});
+  }else if(act==='saveonly'){
+    var o=saveOrder();
+    if(!o){toast('Add at least one item first');return;}
+    renderOrder();toast('Order '+o.no+' saved');
+  }else if(act==='next'){
+    S.sentId=null;S.draft.date=today();persist();renderOrder();window.scrollTo(0,0);
+  }else if(act==='copymsg'){
+    var s=S.orders.filter(function(o){return o.id===S.sentId;})[0];if(s) copyText(message(s),'Message');
+  }
+});
+
+/* ---------- Year account view ---------- */
+var vAcc=$('#v-account'),year=new Date().getFullYear();
+function chartSVG(m){
+  var max=Math.max.apply(null,m),W=336,H=132,top=18,base=104,slot=W/12,out='';
+  out+='<line class="axis" x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'"/>';
+  if(max>0) out+='<line class="axis" stroke-dasharray="3 4" x1="0" y1="'+top+'" x2="'+W+'" y2="'+top+'"/><text class="tick-t" x="0" y="'+(top-5)+'">'+inr(max)+'</text>';
+  m.forEach(function(v,i){
+    var h=max>0?Math.round((v/max)*(base-top)):0,x=i*slot+(slot-16)/2;
+    if(h>0) out+='<rect class="bar'+(v===max?' peak':'')+'" x="'+x.toFixed(1)+'" y="'+(base-h)+'" width="16" height="'+h+'" rx="3"><title>'+MONTHS[i]+': '+inr(v)+'</title></rect>';
+    out+='<text class="tick-t" text-anchor="middle" x="'+(i*slot+slot/2).toFixed(1)+'" y="'+(base+16)+'">'+MONTHS[i].slice(0,3)+'</text>';
+  });
+  return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Spend by month">'+out+'</svg>';
+}
+function renderAccount(){
+  var years={};years[new Date().getFullYear()]=1;
+  S.orders.forEach(function(o){years[+o.date.slice(0,4)]=1;});
+  var ys=Object.keys(years).map(Number).sort(function(a,b){return b-a;});
+  if(ys.indexOf(year)<0) year=ys[0];
+  var list=S.orders.filter(function(o){return +o.date.slice(0,4)===year;})
+    .sort(function(a,b){return a.date<b.date?1:a.date>b.date?-1:a.no<b.no?1:-1;});
+  var m=[0,0,0,0,0,0,0,0,0,0,0,0],sub=0,ship=0;
+  list.forEach(function(o){m[+o.date.slice(5,7)-1]+=o.total;sub+=o.subtotal;ship+=o.shipping;});
+  var html='<div class="card"><div class="cardhead"><h2>Year account</h2>'+
+    '<label style="flex:0 1 130px">Year<select id="year">'+ys.map(function(y){return '<option'+(y===year?' selected':'')+'>'+y+'</option>';}).join('')+'</select></label></div>'+
+    '<div class="stats num">'+
+      '<div class="stat"><span>Orders</span><b>'+list.length+'</b></div>'+
+      '<div class="stat"><span>Items</span><b>'+inr(sub)+'</b></div>'+
+      '<div class="stat"><span>Shipping</span><b>'+inr(ship)+'</b></div>'+
+      '<div class="stat total"><span>Total spent</span><b>'+inr(sub+ship)+'</b></div></div>'+
+    '<figure>'+chartSVG(m)+'</figure>'+
+    '<div class="actions stretch"><button type="button" class="btn" data-act="csv">'+IC.down+'Download CSV</button>'+
+      '<button type="button" class="btn" data-act="csvcopy">'+IC.copy+'Copy CSV</button></div>'+
+    '<p class="muted">The CSV opens in Numbers and Excel. Each item has its own row and shipping has its own row, so the Amount column adds up to the year total.</p></div>';
+  if(!list.length){
+    html+='<div class="card empty"><svg viewBox="0 0 120 80" aria-hidden="true"><rect x="22" y="8" width="76" height="64" rx="6" fill="var(--bg)" stroke="var(--line)" stroke-width="2"/><g fill="var(--line)"><rect x="34" y="22" width="52" height="5" rx="2.5"/><rect x="34" y="36" width="52" height="5" rx="2.5"/><rect x="34" y="50" width="30" height="5" rx="2.5"/></g><circle cx="92" cy="60" r="12" fill="var(--accent)"/><path d="M92 54v12M86 60h12" stroke="var(--surface)" stroke-width="3" stroke-linecap="round"/></svg>'+
+      '<h3>No orders saved in '+year+'</h3><p class="muted">Save an order from the Order tab and it appears here.</p><a class="btn small" href="#order">Go to Order</a></div>';
+  }else{
+    html+='<div class="card"><h2>Orders in '+year+'</h2>';
+    var cur=-1;
+    list.forEach(function(o){
+      var mi=+o.date.slice(5,7)-1;
+      if(mi!==cur){cur=mi;html+='<h3 class="month num"><span>'+MONTHS[mi]+'</span><span>'+inr(m[mi])+'</span></h3>';}
+      html+='<details><summary><span>'+niceDate(o.date)+'</span><small>Order '+esc(o.no)+', '+o.items.length+(o.items.length===1?' item':' items')+'</small><b class="num">'+inr(o.total)+'</b></summary>'+
+        '<div class="obody"><ul class="lines num">'+o.items.map(function(it){
+          return '<li><span>'+esc(it.name)+' <small>'+it.qty+(it.unit?' '+esc(it.unit):'')+' x '+inr(it.rate)+'</small></span><span>'+inr(it.amount)+'</span></li>';}).join('')+
+          '<li><span>Shipping</span><span>'+inr(o.shipping)+'</span></li></ul>'+
+        (o.note?'<p class="muted">Note: '+esc(o.note)+'</p>':'')+
+        '<div class="actions"><button type="button" class="btn small" data-act="reuse" data-id="'+o.id+'">Order this again</button>'+
+          '<button type="button" class="btn small" data-act="copyo" data-id="'+o.id+'">Copy message</button>'+
+          '<button type="button" class="btn small danger" data-act="delo" data-id="'+o.id+'">Delete</button></div></div></details>';
+    });
+    html+='</div>';
+  }
+  vAcc.innerHTML=html;
+}
+vAcc.addEventListener('change',function(e){if(e.target.id==='year'){year=+e.target.value;renderAccount();}});
+vAcc.addEventListener('click',function(e){
+  var b=e.target.closest('[data-act]');if(!b) return;
+  var act=b.dataset.act,o=S.orders.filter(function(x){return x.id===b.dataset.id;})[0];
+  if(act==='csv'){
+    try{
+      var blob=new Blob(['﻿'+csvFor(year)],{type:'text/csv;charset=utf-8'}),a=document.createElement('a'),u=URL.createObjectURL(blob);
+      a.href=u;a.download='dutchland-orders-'+year+'.csv';document.body.appendChild(a);a.click();a.remove();
+      setTimeout(function(){URL.revokeObjectURL(u);},3000);
+      toast('CSV download started. If no file arrives, use Copy CSV.');
+    }catch(err){copyText(csvFor(year),'CSV');}
+  }else if(act==='csvcopy') copyText(csvFor(year),'CSV');
+  else if(act==='copyo'&&o) copyText(message(o),'Message');
+  else if(act==='reuse'&&o){S.draft=draftFrom(o);S.sentId=null;persist();location.hash='order';toast('Loaded into the order form');}
+  else if(act==='delo'&&o){
+    ask('Delete order '+o.no+'?',inr(o.total)+' on '+niceDate(o.date)+' leaves the '+o.date.slice(0,4)+' account. This cannot be undone.','Delete').then(function(y){
+      if(!y) return;S.orders=S.orders.filter(function(x){return x.id!==o.id;});if(S.sentId===o.id) S.sentId=null;persist();renderAccount();toast('Order deleted');});
+  }
+});
+
+/* ---------- Setup view ---------- */
+var vSetup=$('#v-setup');
+function renderSetup(){
+  var s=S.setup;
+  vSetup.innerHTML='<div class="card"><h2>Supplier</h2>'+
+    '<label>Supplier name<input id="su-supplier" data-k="supplier" value="'+esc(s.supplier)+'" placeholder="Who receives the order" autocomplete="off"></label>'+
+    '<label>Supplier’s WhatsApp number<input id="su-wa" data-k="wa" type="tel" inputmode="tel" value="'+esc(s.wa)+'" placeholder="98765 43210" autocomplete="off"></label>'+
+    '<p class="muted" id="wa-hint"></p></div>'+
+    '<div class="card"><h2>You</h2>'+
+    '<label>Your name (shown in the message)<input id="su-buyer" data-k="buyer" value="'+esc(s.buyer)+'" autocomplete="off"></label>'+
+    '<label>Delivery address (optional)<textarea id="su-address" data-k="address" rows="2">'+esc(s.address)+'</textarea></label></div>'+
+    '<div class="card"><h2>Your data</h2><p class="muted">Orders and settings stay in this browser on this device. Nothing is uploaded. Download the CSV from Year account now and then as a backup.</p>'+
+    '<div class="actions"><button type="button" class="btn small danger" id="wipe">Erase everything</button></div></div>';
+  waHint();
+}
+function waHint(){
+  var n=waNumber(S.setup.wa),h=$('#wa-hint');if(!h) return;
+  h.textContent=n?'Orders will open in a chat with +'+n+'.':(String(S.setup.wa||'').trim()?'That does not look like a full number. Enter 10 digits for India, or the country code and number for elsewhere.':'A 10 digit number is treated as Indian (+91). For other countries include the country code.');
+}
+vSetup.addEventListener('input',function(e){var k=e.target.dataset.k;if(!k) return;S.setup[k]=e.target.value;persist();waHint();});
+vSetup.addEventListener('click',function(e){
+  if(e.target.id!=='wipe') return;
+  ask('Erase everything?','All saved orders, the current order and your setup are removed from this browser. Download the CSV first if you want a copy.','Erase').then(function(y){
+    if(!y) return;S=freshState();persist();renderSetup();toast('All data erased');});
+});
+
+/* ---------- routing ---------- */
+var VIEWS={order:renderOrder,account:renderAccount,setup:renderSetup};
+function route(){
+  var v=location.hash.slice(1);if(!VIEWS[v]) v='order';
+  Object.keys(VIEWS).forEach(function(k){
+    $('#v-'+k).hidden=k!==v;
+    var a=$('.tabs a[data-tab="'+k+'"]');
+    if(k===v) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current');
+  });
+  VIEWS[v]();
+}
+window.addEventListener('hashchange',route);
+persist();route();
+})();
+</script>
+</body>
+</html>
